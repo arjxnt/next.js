@@ -37,6 +37,9 @@ import type { NextFontManifest } from '../build/webpack/plugins/next-font-manife
 import type { PagesAPIRouteMatch } from './route-matches/pages-api-route-match'
 import type { RouteMatch } from './route-matches/route-match'
 import type { RouteDefinition } from './route-definitions/route-definition'
+import type { AppPageRouteDefinition } from './route-definitions/app-page-route-definition'
+import type { AppRouteRouteDefinition } from './route-definitions/app-route-route-definition'
+import type { LocaleRouteDefinition } from './route-definitions/locale-route-definition'
 import type {
   Server as HTTPServer,
   IncomingMessage,
@@ -1625,7 +1628,7 @@ export default abstract class Server<
     pathname: string,
     kind: RouteKind.PAGES | RouteKind.PAGES_API,
     locale?: string
-  ): RouteDefinition | undefined {
+  ): LocaleRouteDefinition<RouteKind.PAGES | RouteKind.PAGES_API> | undefined {
     const filename = this.pagesManifest?.[page]
 
     if (!filename) return
@@ -1643,12 +1646,12 @@ export default abstract class Server<
             },
           }
         : {}),
-    } as RouteDefinition
+    }
   }
 
   private getAppPageRouteDefinition(
     pathname: string
-  ): RouteDefinition | undefined {
+  ): AppPageRouteDefinition | undefined {
     const appPaths = this.appPathRoutes?.[pathname]
     if (!appPaths) return
 
@@ -1672,12 +1675,12 @@ export default abstract class Server<
       bundlePath: this.appNormalizers.bundlePath.normalize(page),
       filename: this.appNormalizers.filename.normalize(filename),
       appPaths,
-    } as RouteDefinition
+    }
   }
 
   private getAppRouteRouteDefinition(
     page: string
-  ): RouteDefinition | undefined {
+  ): AppRouteRouteDefinition | undefined {
     const filename = this.appPathsManifest?.[page]
     if (!filename) return
 
