@@ -1409,5 +1409,7 @@
   "1408": "Route \"%s\": Next.js encountered URL data during prerendering or a navigation.\\n\\n\\`params\\` or \\`searchParams\\` accessed outside of \\`<Suspense>\\` may prevent the navigation from being instant, leading to a slower user experience.\\n\\nWays to fix this:\\n  - [stream] Provide a placeholder with \\`<Suspense fallback={...}>\\` around the data access\\n    https://nextjs.org/docs/messages/instant-shell-url-data#wrap-in-or-move-into-suspense\\n  - [block] Set \\`export const instant = false\\` to allow a blocking route\\n    https://nextjs.org/docs/messages/instant-shell-url-data#allow-blocking-route",
   "1409": "Route \"%s\": Next.js encountered URL data in \\`generateViewport()\\`.\\n\\n\\`params\\` or \\`searchParams\\` in \\`generateViewport()\\` prevents the page from being prerendered, leading to a slower user experience.\\n\\nWays to fix this:\\n  - [static] Use a static viewport export instead of \\`generateViewport()\\`\\n    https://nextjs.org/docs/messages/blocking-prerender-viewport-runtime#use-static-viewport\\n  - [block] Set \\`export const instant = false\\` to allow a blocking route\\n    https://nextjs.org/docs/messages/blocking-prerender-viewport-runtime#allow-blocking-route",
   "1410": "Invariant: no direct app page entry found for %s",
-  "1411": "Invariant: dev virtual filesystem item was not handled by the development bundler"
+  "1411": "Invariant: dev virtual filesystem item was not handled by the development bundler",
+  "1412": "Invariant: dev server state can only be updated in dev",
+  "1413": "Invariant: no app initialized"
 }
