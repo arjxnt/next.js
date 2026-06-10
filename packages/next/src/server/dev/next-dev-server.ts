@@ -122,6 +122,7 @@ export interface Options extends ServerOptions {
 export default class DevServer extends Server {
   // Override type to make the full config available instead of only NextConfigRuntime
   protected readonly nextConfig: NextConfigComplete
+  private readonly pagesErrorDebug = ReactDevOverlay
 
   /**
    * The promise that resolves when the server is ready. When this is unset
@@ -186,7 +187,6 @@ export default class DevServer extends Server {
     this.bundlerService = options.bundlerService
     this.startServerSpan =
       options.startServerSpan ?? trace('start-next-dev-server')
-    this.renderOpts.ErrorDebug = ReactDevOverlay
     this.staticPathsCache = new LRUCache(
       // 5MB
       5 * 1024 * 1024,
@@ -510,7 +510,7 @@ export default class DevServer extends Server {
     const span = trace('handle-request', undefined, { url: req.url })
     const result = await span.traceAsyncFn(async () => {
       await this.ready?.promise
-      addRequestMeta(req, 'PagesErrorDebug', this.renderOpts.ErrorDebug)
+      addRequestMeta(req, 'PagesErrorDebug', this.pagesErrorDebug)
       return await super.handleRequest(req, res, parsedUrl)
     })
     const memoryUsage = process.memoryUsage()
