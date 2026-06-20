@@ -351,11 +351,11 @@ async function startWatcher(
   opts.fsChecker.ensureCallback(async function ensure(item) {
     if (item.type === 'appFile' || item.type === 'pageFile') {
       const definition = item.route
-      // App paths can normalize away groups and parallel slots. Ensure the
-      // concrete route definition rather than the normalized request pathname.
+      // Keep the normalized route for diagnostics and static-info lookup. The
+      // definition identifies the concrete grouped or parallel app entry.
       await hotReloader.ensurePage({
         clientOnly: false,
-        page: definition?.page ?? item.itemPath,
+        page: item.itemPath,
         isApp: item.type === 'appFile',
         definition,
         url: item.requestPath,
