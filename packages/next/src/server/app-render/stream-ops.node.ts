@@ -44,6 +44,7 @@ import {
 import { DetachedPromise } from '../../lib/detached-promise'
 import { getTracer } from '../lib/trace/tracer'
 import { AppRenderSpan } from '../lib/trace/constants'
+import { getRequestInsightsIdentity } from '../lib/trace/request-insights-identity'
 import {
   atLeastOneTask,
   waitAtLeastOneReactRenderTask,
@@ -589,37 +590,54 @@ export async function renderToNodeFizzStream(
   const allReady = new DetachedPromise<void>()
   const deferPipe = options?.waitForAllReady === true
 
-  const pipeable = getTracer().trace(AppRenderSpan.renderToReadableStream, () =>
-    renderToPipeableStream(element, {
-      ...streamOptions,
-      onHeaders: streamOptions?.onHeaders,
-      onShellReady() {
-        streamOptions?.onShellReady?.()
-        shellReady.resolve()
-      },
-      onShellError(error: unknown) {
-        streamOptions?.onShellError?.(error)
-        shellReady.reject(error)
-      },
-      onAllReady() {
-        streamOptions?.onAllReady?.()
-        if (deferPipe) {
-          pipeable.pipe(pt)
-        }
-        allReady.resolve()
-      },
-      onError: streamOptions?.onError,
-    })
+  const pipeable = getTracer().trace(
+    AppRenderSpan.renderToReadableStream,
+    { spanName: 'start HTML render' },
+    () =>
+      renderToPipeableStream(element, {
+        ...streamOptions,
+        onHeaders: streamOptions?.onHeaders,
+        onShellReady() {
+          streamOptions?.onShellReady?.()
+          shellReady.resolve()
+        },
+        onShellError(error: unknown) {
+          streamOptions?.onShellError?.(error)
+          shellReady.reject(error)
+        },
+        onAllReady() {
+          streamOptions?.onAllReady?.()
+          if (deferPipe) {
+            pipeable.pipe(pt)
+          }
+          allReady.resolve()
+        },
+        onError: streamOptions?.onError,
+      })
   )
 
   await getTracer().trace(
     AppRenderSpan.waitShellReady,
+    { spanName: 'wait for HTML shell' },
     () => shellReady.promise
   )
 
   if (!deferPipe) {
-    await waitAtLeastOneReactRenderTask()
-    pipeable.pipe(pt)
+    if (getRequestInsightsIdentity() || process.env.NEXT_OTEL_VERBOSE === '1') {
+      await getTracer().trace(
+        AppRenderSpan.waitForFizzRenderTask,
+        { spanName: 'wait for HTML render task' },
+        waitAtLeastOneReactRenderTask
+      )
+      getTracer().trace(
+        AppRenderSpan.pipeFizzStream,
+        { spanName: 'pipe HTML stream' },
+        () => pipeable.pipe(pt)
+      )
+    } else {
+      await waitAtLeastOneReactRenderTask()
+      pipeable.pipe(pt)
+    }
   }
 
   return {
@@ -703,18 +721,41 @@ export async function continueFizzStream(
     validateRootLayout,
   }: import('./stream-ops.web').ContinueFizzStreamOptions
 ): Promise<Readable> {
+  const shouldTraceDetailedRender =
+    getRequestInsightsIdentity() || process.env.NEXT_OTEL_VERBOSE === '1'
+
   // Suffix itself might contain close tags at the end, so we need to split it.
   const suffixUnclosed = suffix ? suffix.split(CLOSE_TAG, 1)[0] : null
 
   if (isStaticGeneration) {
     if (allReady) {
-      await allReady
+      if (shouldTraceDetailedRender) {
+        await getTracer().trace(
+          AppRenderSpan.waitForFizzFlush,
+          { spanName: 'wait for HTML flush' },
+          () => allReady
+        )
+      } else {
+        await allReady
+      }
     }
   } else {
     // Otherwise, we want to make sure Fizz is done with all microtasky work
     // before we start pulling the stream and cause a flush.
-    await waitAtLeastOneReactRenderTask()
+    if (shouldTraceDetailedRender) {
+      await getTracer().trace(
+        AppRenderSpan.waitForFizzFlush,
+        { spanName: 'wait for HTML flush' },
+        waitAtLeastOneReactRenderTask
+      )
+    } else {
+      await waitAtLeastOneReactRenderTask()
+    }
   }
+
+  const createHTMLTransformsStart = shouldTraceDetailedRender
+    ? performance.timeOrigin + performance.now()
+    : undefined
 
   // Pipe the render stream through Node.js Transforms:
   // 1. Buffer – coalesces chunks written in the same microtask into one Uint8Array
@@ -768,6 +809,22 @@ export async function continueFizzStream(
   const headInsertion = createHeadInsertionTransform(getServerInsertedHTML)
   source.pipe(headInsertion)
   source = headInsertion
+
+  if (createHTMLTransformsStart !== undefined) {
+    const createHTMLTransformsEnd = performance.timeOrigin + performance.now()
+    const createHTMLTransformsSpan = getTracer().startSpan(
+      AppRenderSpan.createHTMLTransforms,
+      {
+        startTime: createHTMLTransformsStart,
+        attributes: {
+          'next.span_name': 'create HTML transforms',
+          'next.span_type': AppRenderSpan.createHTMLTransforms,
+        },
+      }
+    )
+    createHTMLTransformsSpan.updateName('create HTML transforms')
+    createHTMLTransformsSpan.end(createHTMLTransformsEnd)
+  }
 
   return source
 }

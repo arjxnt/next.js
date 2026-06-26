@@ -9,11 +9,19 @@
 
 enum BaseServerSpan {
   handleRequest = 'BaseServer.handleRequest',
+  handleRequestImpl = 'BaseServer.handleRequestImpl',
+  prepareRequest = 'BaseServer.prepareRequest',
+  dispatchRequest = 'BaseServer.dispatchRequest',
   run = 'BaseServer.run',
   pipe = 'BaseServer.pipe',
   getStaticHTML = 'BaseServer.getStaticHTML',
   render = 'BaseServer.render',
   renderToResponseWithComponents = 'BaseServer.renderToResponseWithComponents',
+  prepareResponseWithComponents = 'BaseServer.prepareResponseWithComponents',
+  getIncrementalCache = 'BaseServer.getIncrementalCache',
+  resolvePrerendering = 'BaseServer.resolvePrerendering',
+  prepareRouteHandler = 'BaseServer.prepareRouteHandler',
+  executeRouteHandler = 'BaseServer.executeRouteHandler',
   renderToResponse = 'BaseServer.renderToResponse',
   renderToHTML = 'BaseServer.renderToHTML',
   renderError = 'BaseServer.renderError',
@@ -37,6 +45,9 @@ enum NextServerSpan {
 
 enum NextNodeServerSpan {
   compression = 'NextNodeServer.compression',
+  prepareRoute = 'NextNodeServer.prepareRoute',
+  matchRoute = 'NextNodeServer.matchRoute',
+  resolveRoute = 'NextNodeServer.resolveRoute',
   getBuildId = 'NextNodeServer.getBuildId',
   createComponentTree = 'NextNodeServer.createComponentTree',
   clientComponentLoading = 'NextNodeServer.clientComponentLoading',
@@ -61,6 +72,7 @@ enum NextNodeServerSpan {
   renderError = 'NextNodeServer.renderError',
   renderErrorToHTML = 'NextNodeServer.renderErrorToHTML',
   render404 = 'NextNodeServer.render404',
+  waitForFirstResponseChunk = 'NextNodeServer.waitForFirstResponseChunk',
   startResponse = 'NextNodeServer.startResponse',
 
   // nested inner span, does not require parent scope name
@@ -83,16 +95,33 @@ enum RenderSpan {
 }
 
 enum AppRenderSpan {
+  prepareAppPageResponse = 'AppRender.prepareAppPageResponse',
+  initializeRender = 'AppRender.initializeRender',
+  finalizeRSCPayload = 'AppRender.finalizeRSCPayload',
+  startRSCStream = 'AppRender.startRSCStream',
+  waitForRSC = 'AppRender.waitForRSC',
+  prepareHTMLRender = 'AppRender.prepareHTMLRender',
   renderToString = 'AppRender.renderToString',
   renderToReadableStream = 'AppRender.renderToReadableStream',
   getBodyResult = 'AppRender.getBodyResult',
   fetch = 'AppRender.fetch',
   waitShellReady = 'AppRender.waitShellReady',
+  waitForFizzRenderTask = 'AppRender.waitForFizzRenderTask',
+  pipeFizzStream = 'AppRender.pipeFizzStream',
+  waitForFizzFlush = 'AppRender.waitForFizzFlush',
+  createHTMLTransforms = 'AppRender.createHTMLTransforms',
   renderToNodeFizzStream = 'AppRender.renderToNodeFizzStream',
 }
 
 enum RouterSpan {
   executeRoute = 'Router.executeRoute',
+}
+
+enum DevRouteMatcherManagerSpan {
+  matchDevelopmentRoute = 'DevRouteMatcherManager.matchDevelopmentRoute',
+  ensureRoute = 'DevRouteMatcherManager.ensureRoute',
+  reloadMatchers = 'DevRouteMatcherManager.reloadMatchers',
+  matchProductionRoute = 'DevRouteMatcherManager.matchProductionRoute',
 }
 
 enum NodeSpan {
@@ -120,6 +149,7 @@ type SpanTypes =
   | `${NextNodeServerSpan}`
   | `${RenderSpan}`
   | `${RouterSpan}`
+  | `${DevRouteMatcherManagerSpan}`
   | `${AppRenderSpan}`
   | `${NodeSpan}`
   | `${AppRouteRouteHandlersSpan}`
@@ -162,6 +192,7 @@ export {
   StartServerSpan,
   RenderSpan,
   RouterSpan,
+  DevRouteMatcherManagerSpan,
   AppRenderSpan,
   NodeSpan,
   AppRouteRouteHandlersSpan,

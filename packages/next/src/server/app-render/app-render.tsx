@@ -94,6 +94,7 @@ import {
 import { isRedirectError } from '../../client/components/redirect-error'
 import { getImplicitTags, type ImplicitTags } from '../lib/implicit-tags'
 import { AppRenderSpan, NextNodeServerSpan } from '../lib/trace/constants'
+import { getRequestInsightsIdentity } from '../lib/trace/request-insights-identity'
 import { getTracer, SpanStatusCode } from '../lib/trace/tracer'
 import { FlightRenderResult } from './flight-render-result'
 import {
@@ -249,7 +250,11 @@ import {
 import { isReactLargeShellError } from './react-large-shell-error'
 import type { GlobalErrorComponent } from '../../client/components/builtin/global-error'
 import { normalizeConventionFilePath } from './segment-explorer-path'
-import { getRequestMeta } from '../request-meta'
+import {
+  addRequestMeta,
+  getRequestMeta,
+  removeRequestMeta,
+} from '../request-meta'
 import {
   getDynamicParam,
   interpolateParallelRouteParams,
@@ -2118,6 +2123,11 @@ async function getRSCPayload(
     MetadataOutlet,
   })
 
+  const finalizePayloadStart =
+    getRequestInsightsIdentity() || process.env.NEXT_OTEL_VERBOSE === '1'
+      ? performance.timeOrigin + performance.now()
+      : undefined
+
   // When the `vary` response header is present with `Next-URL`, that means there's a chance
   // it could respond differently if there's an interception route. We provide this information
   // to `AppRouter` so that it can properly seed the prefetch cache with a prefix, if needed.
@@ -2165,7 +2175,7 @@ async function getRSCPayload(
     workStore.isStaticGeneration &&
     ctx.renderOpts.experimental.isRoutePPREnabled === true
 
-  return maybeAppendBuildIdToRSCPayload(ctx, {
+  const payload = maybeAppendBuildIdToRSCPayload(ctx, {
     // See the comment above the `Preloads` component (below) for why this is part of the payload
     P: createElement(Preloads, {
       preloadCallbacks: preloadCallbacks,
@@ -2203,6 +2213,24 @@ async function getRSCPayload(
       ? ((await getDynamicStaleTime(tree)) ?? undefined)
       : undefined,
   } satisfies InitialRSCPayload & { P: ReactNode })
+
+  if (finalizePayloadStart !== undefined) {
+    const finalizePayloadEnd = performance.timeOrigin + performance.now()
+    const finalizePayloadSpan = getTracer().startSpan(
+      AppRenderSpan.finalizeRSCPayload,
+      {
+        startTime: finalizePayloadStart,
+        attributes: {
+          'next.span_name': 'finalize RSC payload',
+          'next.span_type': AppRenderSpan.finalizeRSCPayload,
+        },
+      }
+    )
+    finalizePayloadSpan.updateName('finalize RSC payload')
+    finalizePayloadSpan.end(finalizePayloadEnd)
+  }
+
+  return payload
 }
 
 /**
@@ -2630,10 +2658,7 @@ async function renderToHTMLOrFlightImpl(
                 'next.span_type': NextNodeServerSpan.clientComponentLoading,
               },
             })
-            .end(
-              metrics.clientComponentLoadStart +
-                metrics.clientComponentLoadTimes
-            )
+            .end(metrics.clientComponentLoadEnd)
         }
       }
     })
@@ -2672,6 +2697,9 @@ async function renderToHTMLOrFlightImpl(
 
   let requestId: string
   let htmlRequestId: string
+  const requestInsightsIdentity = process.env.__NEXT_REQUEST_INSIGHTS
+    ? getRequestInsightsIdentity()
+    : undefined
 
   const {
     flightRouterState,
@@ -2686,6 +2714,10 @@ async function renderToHTMLOrFlightImpl(
   if (parsedRequestHeaders.requestId) {
     // If the client has provided a request ID (in development mode), we use it.
     requestId = parsedRequestHeaders.requestId
+  } else if (requestInsightsIdentity) {
+    // Request Insights starts recording before the work store exists. Reuse
+    // the identity from that outer request scope so all spans stay together.
+    requestId = requestInsightsIdentity.requestId
   } else {
     // Otherwise we generate a new request ID.
     if (isStaticGeneration) {
@@ -2706,7 +2738,10 @@ async function renderToHTMLOrFlightImpl(
   // send debug information to the associated WebSocket client. Otherwise, this
   // is the request for the HTML document, so we use the request ID also as the
   // HTML request ID.
-  htmlRequestId = parsedRequestHeaders.htmlRequestId || requestId
+  htmlRequestId =
+    parsedRequestHeaders.htmlRequestId ||
+    requestInsightsIdentity?.htmlRequestId ||
+    requestId
   workStore.requestId = requestId
   workStore.htmlRequestId = htmlRequestId
 
@@ -3084,6 +3119,14 @@ export const renderToHTMLOrFlight: AppPageRender = (
     throw new Error('Invalid URL')
   }
 
+  if (getRequestInsightsIdentity() || process.env.NEXT_OTEL_VERBOSE === '1') {
+    addRequestMeta(
+      req,
+      'appRenderInitializationStart',
+      performance.timeOrigin + performance.now()
+    )
+  }
+
   const url = parseRelativeUrl(req.url, undefined, false)
 
   // We read these values from the request object as, in certain cases,
@@ -3324,6 +3367,27 @@ async function renderToStream(
     bootstrapScriptContent =
       (bootstrapScriptContent ? `${bootstrapScriptContent};` : '') +
       (await getInstantTestBootstrapScriptContent())
+  }
+
+  const initializationStart = getRequestMeta(
+    req,
+    'appRenderInitializationStart'
+  )
+  if (initializationStart !== undefined) {
+    removeRequestMeta(req, 'appRenderInitializationStart')
+    const initializationEnd = performance.timeOrigin + performance.now()
+    const initializationSpan = getTracer().startSpan(
+      AppRenderSpan.initializeRender,
+      {
+        startTime: initializationStart,
+        attributes: {
+          'next.span_name': 'initialize app render',
+          'next.span_type': AppRenderSpan.initializeRender,
+        },
+      }
+    )
+    initializationSpan.updateName('initialize app render')
+    initializationSpan.end(initializationEnd)
   }
 
   // Create the "render route (app)" span manually so we can keep it open during streaming.
@@ -3674,6 +3738,11 @@ async function renderToStream(
         reactServerResult = new ReactServerResult(flightStream)
       } else {
         // MARK: nodeStreams RSC
+        const startRSCStreamTime =
+          getRequestInsightsIdentity() || process.env.NEXT_OTEL_VERBOSE === '1'
+            ? performance.timeOrigin + performance.now()
+            : undefined
+
         if (process.env.__NEXT_USE_NODE_STREAMS) {
           // This is a dynamic render. We don't do dynamic tracking because we're not prerendering
           const RSCPayload: RSCPayload & RSCPayloadDevProperties =
@@ -3758,12 +3827,44 @@ async function renderToStream(
             )
           )
         }
+
+        if (startRSCStreamTime !== undefined) {
+          const startRSCStreamEnd = performance.timeOrigin + performance.now()
+          const startRSCStreamSpan = getTracer().startSpan(
+            AppRenderSpan.startRSCStream,
+            {
+              startTime: startRSCStreamTime,
+              attributes: {
+                'next.span_name': 'start RSC stream',
+                'next.span_type': AppRenderSpan.startRSCStream,
+              },
+            }
+          )
+          startRSCStreamSpan.updateName('start RSC stream')
+          startRSCStreamSpan.end(startRSCStreamEnd)
+        }
       }
 
       // React doesn't start rendering synchronously but we want the RSC render to have a chance to start
       // before we begin SSR rendering because we want to capture any available preload headers so we tick
       // one task before continuing
-      await waitAtLeastOneReactRenderTask()
+      if (
+        getRequestInsightsIdentity() ||
+        process.env.NEXT_OTEL_VERBOSE === '1'
+      ) {
+        await getTracer().trace(
+          AppRenderSpan.waitForRSC,
+          { spanName: 'wait for RSC render' },
+          waitAtLeastOneReactRenderTask
+        )
+      } else {
+        await waitAtLeastOneReactRenderTask()
+      }
+
+      const prepareHTMLRenderStart =
+        getRequestInsightsIdentity() || process.env.NEXT_OTEL_VERBOSE === '1'
+          ? performance.timeOrigin + performance.now()
+          : undefined
 
       // MARK: nodeStreams HTML
       if (process.env.__NEXT_USE_NODE_STREAMS) {
@@ -3879,8 +3980,26 @@ async function renderToStream(
           formState,
         }
 
+        if (prepareHTMLRenderStart !== undefined) {
+          const prepareHTMLRenderEnd =
+            performance.timeOrigin + performance.now()
+          const prepareHTMLRenderSpan = getTracer().startSpan(
+            AppRenderSpan.prepareHTMLRender,
+            {
+              startTime: prepareHTMLRenderStart,
+              attributes: {
+                'next.span_name': 'prepare HTML render',
+                'next.span_type': AppRenderSpan.prepareHTMLRender,
+              },
+            }
+          )
+          prepareHTMLRenderSpan.updateName('prepare HTML render')
+          prepareHTMLRenderSpan.end(prepareHTMLRenderEnd)
+        }
+
         const { stream: htmlStream, allReady } = await getTracer().trace(
           AppRenderSpan.renderToNodeFizzStream,
+          { spanName: 'render HTML response' },
           () =>
             workUnitAsyncStorage.run(
               requestStore,

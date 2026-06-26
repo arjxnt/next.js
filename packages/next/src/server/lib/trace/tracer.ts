@@ -185,6 +185,7 @@ type NextAttributeNames =
   | 'next.page'
   | 'next.rsc'
   | 'next.segment'
+  | 'next.span.category'
   | 'next.span_name'
   | 'next.span_type'
   | 'next.clientComponentLoadCount'
@@ -337,8 +338,9 @@ class NextTracerImpl implements NextTracer {
     const [type, fnOrOptions, fnOrEmpty] = args
     const tracingEnabled =
       Boolean(NEXT_OTEL_PERFORMANCE_PREFIX) || this.isOpenTelemetryEnabled()
+    const localSpanRecorder = getLocalSpanRecorder()
     const localSpanRecordingEnabled =
-      getLocalSpanRecorder()?.isLocalSpanRecordingEnabled() ?? false
+      localSpanRecorder?.isLocalSpanRecordingEnabled() ?? false
 
     if (!tracingEnabled && !localSpanRecordingEnabled) {
       return typeof fnOrOptions === 'function' ? fnOrOptions() : fnOrEmpty()
@@ -363,12 +365,15 @@ class NextTracerImpl implements NextTracer {
           }
 
     const spanName = options.spanName ?? type
+    const isVanillaSpan =
+      NextVanillaSpanAllowlist.has(type) ||
+      process.env.NEXT_OTEL_VERBOSE === '1'
+    const shouldRecordLocalSpan =
+      localSpanRecordingEnabled &&
+      (isVanillaSpan ||
+        (localSpanRecorder?.isRequestInsightsEnabled() ?? false))
 
-    if (
-      (!NextVanillaSpanAllowlist.has(type) &&
-        process.env.NEXT_OTEL_VERBOSE !== '1') ||
-      options.hideSpan
-    ) {
+    if ((!isVanillaSpan && !shouldRecordLocalSpan) || options.hideSpan) {
       return fn()
     }
 
@@ -392,6 +397,7 @@ class NextTracerImpl implements NextTracer {
     const spanId = getSpanId()
 
     options.attributes = {
+      'next.span.category': 'nextjs',
       'next.span_name': spanName,
       'next.span_type': type,
       ...options.attributes,
@@ -402,8 +408,8 @@ class NextTracerImpl implements NextTracer {
         spanName,
         options,
         spanContext,
-        tracingEnabled,
-        localSpanRecordingEnabled,
+        tracingEnabled && isVanillaSpan,
+        shouldRecordLocalSpan,
         (span: Span) => {
           let startTime: number | undefined
           if (
@@ -545,6 +551,7 @@ class NextTracerImpl implements NextTracer {
       name,
       attributes: options.attributes,
       links: options.links,
+      startTime: options.startTime,
       delegateSpan,
       traceId: delegateSpanContext?.traceId ?? parentSpanContext?.traceId,
       spanId: delegateSpanContext?.spanId,
@@ -570,7 +577,8 @@ class NextTracerImpl implements NextTracer {
 
     if (
       !NextVanillaSpanAllowlist.has(name) &&
-      process.env.NEXT_OTEL_VERBOSE !== '1'
+      process.env.NEXT_OTEL_VERBOSE !== '1' &&
+      !process.env.__NEXT_DEV_SERVER
     ) {
       return fn
     }
@@ -603,7 +611,17 @@ class NextTracerImpl implements NextTracer {
   public startSpan(type: SpanTypes): Span
   public startSpan(type: SpanTypes, options: TracerSpanOptions): Span
   public startSpan(...args: Array<any>): Span {
-    const [type, options]: [string, TracerSpanOptions | undefined] = args as any
+    const [type, passedOptions]: [string, TracerSpanOptions | undefined] =
+      args as any
+    const options: TracerSpanOptions = passedOptions
+      ? {
+          ...passedOptions,
+          attributes: {
+            'next.span.category': 'nextjs',
+            ...passedOptions.attributes,
+          },
+        }
+      : { attributes: { 'next.span.category': 'nextjs' } }
 
     const parentContext =
       this.getSpanContext(options?.parentSpan ?? this.getActiveScopeSpan()) ??
