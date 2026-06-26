@@ -11,6 +11,8 @@ type RequestInsight = {
   durationMs?: number
   spans: Array<{
     name: string
+    spanId?: string
+    parentSpanId?: string
     startTime: number
     durationMs?: number
     attributes?: Record<string, string>
@@ -242,6 +244,12 @@ describe('request insights', () => {
         span.attributes?.['next.span_type'] ===
         'DevRouteMatcherManager.ensureRoute'
     )
+    const compileRouteSpan = request?.spans.find(
+      (span) =>
+        span.attributes?.['next.span_type'] ===
+          'DevBundlerService.ensurePage' &&
+        span.parentSpanId === ensureRouteSpan?.spanId
+    )
     const reloadMatchersSpan = request?.spans.find(
       (span) =>
         span.attributes?.['next.span_type'] ===
@@ -265,6 +273,11 @@ describe('request insights', () => {
     expect(ensureRouteSpan!.attributes?.['next.span_name']).toBe(
       'compile and prepare route'
     )
+    expect(compileRouteSpan).toBeDefined()
+    expect(compileRouteSpan!.attributes?.['next.span_name']).toBe(
+      'compile route'
+    )
+    expect(compileRouteSpan!.parentSpanId).toBe(ensureRouteSpan!.spanId)
     expect(reloadMatchersSpan).toBeDefined()
     expect(matchProductionRouteSpan).toBeDefined()
     expect(baseRenderSpan).toBeDefined()
@@ -471,6 +484,7 @@ describe('request insights', () => {
         'NextNodeServer.resolveRoute',
         'DevRouteMatcherManager.matchDevelopmentRoute',
         'DevRouteMatcherManager.ensureRoute',
+        'DevBundlerService.ensurePage',
         'DevRouteMatcherManager.reloadMatchers',
         'DevRouteMatcherManager.matchProductionRoute',
         'BaseServer.render',
