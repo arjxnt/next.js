@@ -185,6 +185,9 @@ export function getDefineEnv({
     ),
     'process.env.__NEXT_USE_CACHE': isUseCacheEnabled,
     'process.env.__NEXT_USE_NODE_STREAMS': isEdgeServer ? false : true,
+    'process.env.__NEXT_EXPERIMENTAL_WEBSOCKET_ROUTE_HANDLERS': isEdgeServer
+      ? false
+      : Boolean(config.experimental.webSocketRouteHandlers),
 
     'process.env.NEXT_SUPPORTS_IMMUTABLE_ASSETS':
       config.experimental.supportsImmutableAssets || false,

@@ -131,6 +131,7 @@ import { recordMcpTelemetry } from '../mcp/mcp-telemetry-tracker'
 import { getFileLogger } from './browser-logs/file-logger'
 import type { ServerCacheStatus } from '../../next-devtools/dev-overlay/cache-indicator'
 import type { Lockfile } from '../../build/lockfile'
+import { closeAllWebSockets } from '../websocket-connection-registry'
 import {
   sendSerializedErrorsToClient,
   sendSerializedErrorsToClientForHtmlRequest,
@@ -197,6 +198,11 @@ function setupServerHmr(
         if (update.type !== 'partial') {
           continue
         }
+
+        // Turbopack's server update currently identifies changed chunks rather
+        // than route entrypoints. Application WebSockets are kept separate
+        // from HMR clients, so closing them here cannot disrupt HMR itself.
+        closeAllWebSockets(1012)
 
         const instruction = update.instruction
         if (!instruction || instruction.type !== 'EcmascriptMergedUpdate') {
