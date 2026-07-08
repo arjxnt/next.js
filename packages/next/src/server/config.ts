@@ -2,7 +2,6 @@ import { existsSync } from 'fs'
 import { basename, extname, join, relative, isAbsolute, resolve } from 'path'
 import { pathToFileURL } from 'url'
 import findUp from 'next/dist/compiled/find-up'
-import semver from 'next/dist/compiled/semver'
 import * as Log from '../build/output/log'
 import * as ciEnvironment from '../server/ci-info'
 import {
@@ -11,6 +10,7 @@ import {
   PHASE_EXPORT,
   PHASE_PRODUCTION_BUILD,
   PHASE_PRODUCTION_SERVER,
+  PHASE_INFO,
   type PHASE_TYPE,
 } from '../shared/lib/constants'
 import {
@@ -490,7 +490,7 @@ function assignDefaultsAndValidate(
   // Turbopack-only; strict mode and `false` (single-chunk-per-module) are webpack-only.
   // Only validate during build/dev — `next start` doesn't pick a bundler and would otherwise
   // see `process.env.TURBOPACK` unset and reject a valid `cssChunking: "graph"` config.
-  if (phase !== PHASE_PRODUCTION_SERVER) {
+  if (phase !== PHASE_PRODUCTION_SERVER && phase !== PHASE_INFO) {
     const cssChunkingValue = result.experimental.cssChunking
     const cssChunkingMode = resolveCssChunkingMode(cssChunkingValue)
     if (cssChunkingMode === 'graph' && !process.env.TURBOPACK) {
@@ -1409,7 +1409,7 @@ function assignDefaultsAndValidate(
   }
 
   if (result.cacheHandlers) {
-    const allowedHandlerNameRegex = /[a-z-]/
+    const allowedHandlerNameRegex = /^[a-z-]+$/
 
     if (typeof result.cacheHandlers !== 'object') {
       throw new Error(
@@ -1583,52 +1583,6 @@ function assignDefaultsAndValidate(
     result.experimental.useCache = result.cacheComponents
   }
 
-  // Node.js version gate for turbopackPluginRuntimeStrategy: 'workerThreads'.
-  // Older Node.js versions have memory safety bugs in worker threads. Bun and
-  // Deno are not affected by this check.
-  {
-    const strategy = result.experimental.turbopackPluginRuntimeStrategy
-    const isForced = strategy === 'forceWorkerThreads'
-    if (strategy === 'workerThreads' || isForced) {
-      // Normalize 'forceWorkerThreads' → 'workerThreads' for Rust/serde
-      result.experimental.turbopackPluginRuntimeStrategy = 'workerThreads'
-
-      const isBun = !!process.versions.bun
-      const isDeno = !!process.versions.deno
-      if (!isBun && !isDeno) {
-        const nodeVersion = process.versions.node
-        const WORKER_THREADS_SAFE_RANGE = '>=24.13.1 <25.0.0 || >=25.4.0'
-        if (
-          !semver.satisfies(nodeVersion, WORKER_THREADS_SAFE_RANGE, {
-            includePrerelease: true,
-          })
-        ) {
-          if (isForced) {
-            Log.warn(
-              `\`experimental.turbopackPluginRuntimeStrategy = ` +
-                `'forceWorkerThreads'\` has been enabled, but you're using ` +
-                `Node.js ${nodeVersion}, which has known memory safety bugs ` +
-                `with worker threads used from the Node-API. You may ` +
-                `experience crashes, segmentation faults, or other ` +
-                `instability. Upgrade to Node.js ${WORKER_THREADS_SAFE_RANGE}.`
-            )
-          } else {
-            Log.warn(
-              `\`experimental.turbopackPluginRuntimeStrategy = ` +
-                `'workerThreads'\` is set but has been ` +
-                `ignored because you're using Node.js ${nodeVersion}, which ` +
-                `has memory safety bugs in worker threads. Falling back to ` +
-                `'childProcesses'. Upgrade to Node.js ` +
-                `${WORKER_THREADS_SAFE_RANGE}.`
-            )
-            result.experimental.turbopackPluginRuntimeStrategy =
-              'childProcesses'
-          }
-        }
-      }
-    }
-  }
-
   // Store the distDirRoot in the config before it is modified for development mode
   ;(result as NextConfigComplete).distDirRoot = result.distDir
 
@@ -1669,6 +1623,17 @@ function finalizeConfig(config: NextConfigComplete): NextConfigComplete {
     process.env.__NEXT_SUPPORTS_IMMUTABLE_ASSETS
   ) {
     config.experimental.supportsImmutableAssets = true
+  }
+
+  if (
+    config.experimental.supportsImmutableAssets &&
+    (config.output === 'export' || config.output === 'standalone')
+  ) {
+    // supportsImmutableAssets is designed to work with adapters. Disable it for output=export and
+    // output=standalone, which are currently using a non-adapter codepath.
+    // Particularly output=export should just run through the adapter, with only static assets.
+    // TODO remove again once output=export (and output=standalone) are using adapters.
+    config.experimental.supportsImmutableAssets = false
   }
 
   return config
@@ -2270,6 +2235,26 @@ function enforceExperimentalFeatures(
     }
   }
 
+  // TODO: Remove this once serverComponentsHmrCancellation is the default.
+  if (
+    process.env.__NEXT_EXPERIMENTAL_SERVER_COMPONENTS_HMR_CANCELLATION ===
+      'true' &&
+    // We do respect an explicit value in the user config.
+    (config.experimental.serverComponentsHmrCancellation === undefined ||
+      (isDefaultConfig && !config.experimental.serverComponentsHmrCancellation))
+  ) {
+    config.experimental.serverComponentsHmrCancellation = true
+
+    if (configuredExperimentalFeatures) {
+      addConfiguredExperimentalFeature(
+        configuredExperimentalFeatures,
+        'serverComponentsHmrCancellation',
+        true,
+        'enabled by `__NEXT_EXPERIMENTAL_SERVER_COMPONENTS_HMR_CANCELLATION`'
+      )
+    }
+  }
+
   // Enable cachedNavigations by default when cacheComponents is enabled.
   // cachedNavigations relies on Cache Components rendering to do anything
   // useful, so the two features are tied together: we only flip the default
@@ -2313,21 +2298,26 @@ function enforceExperimentalFeatures(
     config.experimental.appShells = true
   }
 
-  // TODO: Remove this once appNewScrollHandler is the default.
+  // appNewScrollHandler defaults to `true`. The env var lets us opt back out to
+  // keep test coverage of the old scroll handler on the non-experimental CI
+  // shards. Like the other env-var experimental toggles, opting out is surfaced
+  // in the reported experimental features.
+  // TODO: Remove this once the appNewScrollHandler opt-out is no longer needed
+  // for test coverage.
   if (
-    process.env.__NEXT_EXPERIMENTAL_APP_NEW_SCROLL_HANDLER === 'true' &&
+    process.env.__NEXT_EXPERIMENTAL_APP_NEW_SCROLL_HANDLER === 'false' &&
     // We do respect an explicit value in the user config.
     (config.experimental.appNewScrollHandler === undefined ||
-      (isDefaultConfig && !config.experimental.appNewScrollHandler))
+      (isDefaultConfig && config.experimental.appNewScrollHandler))
   ) {
-    config.experimental.appNewScrollHandler = true
+    config.experimental.appNewScrollHandler = false
 
     if (configuredExperimentalFeatures) {
       addConfiguredExperimentalFeature(
         configuredExperimentalFeatures,
         'appNewScrollHandler',
-        true,
-        'enabled by `__NEXT_EXPERIMENTAL_APP_NEW_SCROLL_HANDLER`'
+        false,
+        'disabled by `__NEXT_EXPERIMENTAL_APP_NEW_SCROLL_HANDLER`'
       )
     }
   }
