@@ -2355,17 +2355,11 @@ pub async fn get_source_map_rope(
             }
         };
 
-    let server_path = container
-        .project()
-        .node_root()
-        .await?
-        .join(&chunk_base_unix)?;
+    let node_root = container.project().node_root().await?;
+    let client_relative_path = container.project().client_relative_path().await?;
 
-    let client_path = container
-        .project()
-        .client_relative_path()
-        .await?
-        .join(&chunk_base_unix)?;
+    let server_path = node_root.join(&chunk_base_unix)?;
+    let client_path = client_relative_path.join(&chunk_base_unix)?;
 
     let mut map = container.get_source_map(server_path, module.clone());
 
@@ -2376,6 +2370,27 @@ pub async fn get_source_map_rope(
         // chunks.
         map = container.get_source_map(client_path, module);
         if !map.await?.is_content() {
+            // HACK: An older revision of a chunk's sourcemap may be requested by an HMR client. We
+            // remove stale entries from the VersionStateMap but a client may be holding onto a
+            // reference to a stale chunk and requesting its sourcmemap via the error
+            // overlay.
+            //
+            // This exists because we don't have logic for the server hmr client to mark which
+            // chunks it's no longer using.
+            //
+            // Fall back to reading from the filesystem.
+            //
+            // In the future, the VersionStateMap should track _modules_ rather than chunks, which
+            // can be observed over time in a stable way, unlike chunks
+            let map_relative = format!("{chunk_base_unix}.map");
+            let server_map = node_root.join(&map_relative)?.read();
+            if server_map.await?.is_content() {
+                return Ok(server_map);
+            }
+            let client_map = client_relative_path.join(&map_relative)?.read();
+            if client_map.await?.is_content() {
+                return Ok(client_map);
+            }
             bail!("chunk/module '{}' is missing a sourcemap", source_url);
         }
     }
