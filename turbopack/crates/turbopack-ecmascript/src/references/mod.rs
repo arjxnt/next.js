@@ -1,6 +1,7 @@
 pub mod amd;
 pub mod async_module;
 pub mod cjs;
+pub mod cjs_exports;
 pub mod constant_condition;
 pub mod constant_value;
 pub mod dynamic_expression;
@@ -700,6 +701,20 @@ async fn analyze_ecmascript_module_internal(
     });
 
     let is_esm = eval_context.is_esm(specified_type);
+
+    // Statically-analyzable CommonJS: recognize named `exports.foo = …` writes so
+    // the graph-level unused-export analysis can drop the ones no importer uses.
+    // Deny-by-default; a no-op unless that analysis is enabled (see
+    // `cjs_exports`).
+    if analyze_mode.is_code_gen() && !is_esm {
+        let cjs_analysis = GLOBALS.set(globals, || {
+            cjs_exports::analyze_cjs_exports(program, eval_context.unresolved_mark)
+        });
+        if let Some(code_gen) = cjs_exports::CjsExportsDropCodeGen::new(&cjs_analysis) {
+            analysis.add_code_gen(code_gen);
+        }
+    }
+
     let compile_time_info = compile_time_info_for_module_options(
         *raw_module.compile_time_info,
         is_esm,
