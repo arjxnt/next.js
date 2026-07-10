@@ -238,11 +238,15 @@ export interface NodeJsPartialHmrUpdate extends BaseUpdate {
   type: 'partial'
   instruction: {
     type: 'EcmascriptMergedUpdate'
-    entries: Record<
+    entries?: Record<
       string,
       { code: string; url: string; map?: string | undefined }
     >
-    chunks?: Record<string, { type: 'partial' }>
+    chunks?: Record<
+      string,
+      | { type: 'added' | 'deleted'; modules?: string[] }
+      | { type: 'partial'; added?: string[]; deleted?: string[] }
+    >
   }
 }
 
