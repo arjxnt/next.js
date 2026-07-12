@@ -193,6 +193,20 @@ impl CjsRequireAssetReferenceCodeGen {
     ) -> Result<CodeGeneration> {
         let reference = self.reference.await?;
 
+        // This `require()` is in `unused_references`: its result is unused and
+        // the target is side-effect free. Replace the call with a placeholder
+        // at the expression level.
+        if chunking_context
+            .unused_references()
+            .contains_key(&ResolvedVc::upcast(self.reference))
+            .await?
+        {
+            let visitor = create_visitor!(self.path, visit_mut_expr, |expr: &mut Expr| {
+                *expr = quote!("0" as Expr);
+            });
+            return Ok(CodeGeneration::visitors(vec![visitor]));
+        }
+
         let pm = PatternMapping::resolve_request(
             *reference.request,
             *reference.origin,

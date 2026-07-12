@@ -2,18 +2,19 @@
 //! reference can narrow which exports of the required module are used.
 //!
 //! [`analyze_require_usage`] classifies each call by how its result
-//! flows: `const { a } = require(...)` / `require(...).foo` expose the members at
-//! the call site; `const x = require(...)` binds the namespace, so every use of
-//! `x` is scanned ([`NamespaceUsageVisitor`]). Deny-by-default: any use that
-//! isn't a static member read yields `ExportUsage::All`.
+//! flows: a bare `require(...)` statement discards the result (`Evaluation`);
+//! `const { a } = require(...)` / `require(...).foo` expose the members at the
+//! call site; `const x = require(...)` binds the namespace, so every use of `x`
+//! is scanned ([`NamespaceUsageVisitor`]). Deny-by-default: any use that isn't a
+//! static member read yields `ExportUsage::All`.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use swc_core::{
     common::{BytePos, Mark},
     ecma::{
         ast::{
-            CallExpr, Callee, ComputedPropName, Expr, Id, Ident, Lit, MemberExpr, MemberProp, Pat,
-            Program, VarDeclarator,
+            CallExpr, Callee, ComputedPropName, Expr, ExprStmt, Id, Ident, Lit, MemberExpr,
+            MemberProp, Pat, Program, VarDeclarator,
         },
         visit::{Visit, VisitWith, noop_visit_type},
     },
@@ -60,6 +61,8 @@ pub fn analyze_require_usage(
 
         for (id, span_lo) in collector.bindings {
             let usage = match visitor.usage.remove(&id) {
+                // Bound but never read → only the target's evaluation matters.
+                Some(NamespaceUsage::Members(names)) if names.is_empty() => ExportUsage::Evaluation,
                 Some(NamespaceUsage::Members(names)) => {
                     ExportUsage::PartialNamespaceObject(names.into_iter().collect())
                 }
@@ -96,9 +99,10 @@ fn as_require_call(expr: &Expr, unresolved_mark: Mark) -> Option<&CallExpr> {
 }
 
 /// Classifies each `require("<literal>")` call from its immediate syntactic
-/// position: `const { a } = require(...)` and `require(...).foo` are resolved
-/// here (`resolved`); `const x = require(...)` records the binding's [`Id`] and
-/// call position for the whole-module scan (`bindings` → [`NamespaceUsageVisitor`]).
+/// position: a bare `require(...)` statement, `const { a } = require(...)`, and
+/// `require(...).foo` are resolved here (`resolved`); `const x = require(...)`
+/// records the binding's [`Id`] and call position for the whole-module scan
+/// (`bindings` → [`NamespaceUsageVisitor`]).
 struct RequireBindingCollector {
     unresolved_mark: Mark,
     bindings: FxHashMap<Id, BytePos>,
@@ -120,6 +124,8 @@ impl Visit for RequireBindingCollector {
                 // `const { a, b } = require(...)`: the used members are the keys.
                 Pat::Object(_) => {
                     let usage = match extract_names_from_object_pat(&n.name) {
+                        // `const {} = require(...)`: no members read → evaluation only.
+                        Some(names) if names.is_empty() => ExportUsage::Evaluation,
                         Some(names) => ExportUsage::PartialNamespaceObject(names),
                         // Rest / computed key → the whole namespace is needed.
                         None => ExportUsage::All,
@@ -131,6 +137,15 @@ impl Visit for RequireBindingCollector {
                     self.resolved.insert(call.span.lo, ExportUsage::All);
                 }
             }
+        }
+        n.visit_children_with(self);
+    }
+
+    fn visit_expr_stmt(&mut self, n: &ExprStmt) {
+        // A bare `require("x")` statement discards its result — only the target's
+        // evaluation (its side effects) matters.
+        if let Some(call) = as_require_call(&n.expr, self.unresolved_mark) {
+            self.resolved.insert(call.span.lo, ExportUsage::Evaluation);
         }
         n.visit_children_with(self);
     }
