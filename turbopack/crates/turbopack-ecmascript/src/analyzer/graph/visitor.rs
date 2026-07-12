@@ -624,7 +624,7 @@ fn extract_names_from_then_callback(call: &CallExpr) -> Option<SmallVec<[RcStr; 
     }
 }
 
-fn extract_name_from_member_prop(prop: &MemberProp) -> Option<SmallVec<[RcStr; 1]>> {
+pub(crate) fn extract_name_from_member_prop(prop: &MemberProp) -> Option<SmallVec<[RcStr; 1]>> {
     match prop {
         MemberProp::Ident(ident) => Some(SmallVec::from_buf([ident.sym.as_str().into()])),
         MemberProp::Computed(ComputedPropName {
@@ -635,7 +635,7 @@ fn extract_name_from_member_prop(prop: &MemberProp) -> Option<SmallVec<[RcStr; 1
     }
 }
 
-fn extract_names_from_object_pat(pat: &Pat) -> Option<SmallVec<[RcStr; 1]>> {
+pub(crate) fn extract_names_from_object_pat(pat: &Pat) -> Option<SmallVec<[RcStr; 1]>> {
     let Pat::Object(obj_pat) = pat else {
         return None;
     };

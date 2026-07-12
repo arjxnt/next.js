@@ -17,6 +17,7 @@ pub mod node;
 pub mod pattern_mapping;
 pub mod raw;
 pub mod require_context;
+pub mod require_usage;
 pub mod service_worker;
 pub mod type_issue;
 pub mod typescript;
@@ -715,6 +716,15 @@ async fn analyze_ecmascript_module_internal(
         }
     }
 
+    // How each `require("…")` call's result is used, keyed by the call position.
+    let require_binding_usage = if analyze_mode.is_code_gen() {
+        GLOBALS.set(globals, || {
+            require_usage::analyze_require_usage(program, eval_context.unresolved_mark)
+        })
+    } else {
+        Default::default()
+    };
+
     let compile_time_info = compile_time_info_for_module_options(
         *raw_module.compile_time_info,
         is_esm,
@@ -1094,6 +1104,11 @@ async fn analyze_ecmascript_module_internal(
                         .link_value(take(&mut *func), eval_context.imports.get_attributes(span))
                         .await?;
 
+                    let call_usage = require_binding_usage
+                        .get(&span.lo)
+                        .cloned()
+                        .unwrap_or(ExportUsage::All);
+
                     handle_call(
                         &ast_path,
                         span,
@@ -1105,6 +1120,7 @@ async fn analyze_ecmascript_module_internal(
                         in_try,
                         new,
                         eval_context.imports.get_attributes(span),
+                        call_usage,
                     )
                     .await?;
                 }
@@ -1203,6 +1219,9 @@ async fn analyze_ecmascript_module_internal(
                         in_try,
                         new,
                         eval_context.imports.get_attributes(span),
+                        // A member call (`obj.method(...)`) result isn't narrowed
+                        // for require export usage.
+                        ExportUsage::All,
                     )
                     .await?;
                 }
@@ -1549,6 +1568,7 @@ async fn handle_call<'a, G: Fn(BumpVec<'a, Effect<'a>>) + Send + Sync>(
     in_try: bool,
     new: bool,
     attributes: &ImportAttributes,
+    call_usage: ExportUsage,
 ) -> Result<()> {
     let &AnalysisState {
         handler,
@@ -1622,6 +1642,7 @@ async fn handle_call<'a, G: Fn(BumpVec<'a, Effect<'a>>) + Send + Sync>(
                         collect_affecting_sources,
                         tracing_only,
                         attributes,
+                        call_usage.clone(),
                     )
                     .await?;
                 }
@@ -1646,6 +1667,7 @@ async fn handle_call<'a, G: Fn(BumpVec<'a, Effect<'a>>) + Send + Sync>(
                 collect_affecting_sources,
                 tracing_only,
                 attributes,
+                call_usage,
             )
             .await?;
         }
@@ -1832,6 +1854,7 @@ async fn handle_well_known_function_call<'a, 'l, F, Fut>(
     collect_affecting_sources: bool,
     tracing_only: bool,
     attributes: &ImportAttributes,
+    call_usage: ExportUsage,
 ) -> Result<()>
 where
     'a: 'l,
@@ -2141,6 +2164,7 @@ where
                         error_mode,
                         attributes.chunking_type,
                         resolve_override,
+                        call_usage.clone(),
                     ),
                     ast_path.to_vec().into(),
                 );
@@ -2193,6 +2217,7 @@ where
                         error_mode,
                         attributes.chunking_type,
                         None,
+                        call_usage.clone(),
                     ),
                     ast_path.to_vec().into(),
                 );

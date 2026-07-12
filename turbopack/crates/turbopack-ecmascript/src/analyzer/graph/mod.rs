@@ -18,7 +18,7 @@ use crate::{
 
 mod effects;
 mod eval_context;
-mod visitor;
+pub(crate) mod visitor;
 
 #[derive(Debug)]
 pub struct VarGraph<'a> {
