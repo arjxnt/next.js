@@ -170,6 +170,7 @@ describe('request insights trace viewer', () => {
           durationMs: 1,
           attributes: {
             'next.span_type': 'LoadComponents.loadComponents',
+            'next.span_name': 'load components',
           },
         },
         {
@@ -275,7 +276,7 @@ describe('request insights trace viewer', () => {
     ])
   })
 
-  it('gives every displayed span a human readable name', () => {
+  it('uses the recorded human readable span name', () => {
     const request = createRequest({
       spans: [
         {
@@ -283,7 +284,7 @@ describe('request insights trace viewer', () => {
           startTime: 100,
           durationMs: 10,
           attributes: {
-            'next.span_name': 'AppRender.renderToNodeFizzStream',
+            'next.span_name': 'render HTML shell',
             'next.span_type': 'AppRender.renderToNodeFizzStream',
           },
         },
@@ -292,7 +293,7 @@ describe('request insights trace viewer', () => {
           startTime: 110,
           durationMs: 10,
           attributes: {
-            'next.span_name': 'wait for Fizz render task',
+            'next.span_name': 'wait for HTML render task',
             'next.span_type': 'AppRender.waitForFizzRenderTask',
           },
         },
@@ -301,7 +302,7 @@ describe('request insights trace viewer', () => {
           startTime: 120,
           durationMs: 10,
           attributes: {
-            'next.span_name': 'AppRender.renderToNodeFlightStream',
+            'next.span_name': 'render RSC response',
             'next.span_type': 'AppRender.renderToNodeFlightStream',
           },
         },
@@ -316,9 +317,9 @@ describe('request insights trace viewer', () => {
       ],
     })
     const expectedLabels = [
-      'render to HTML stream',
+      'render HTML shell',
       'wait for HTML render task',
-      'render to RSC stream',
+      'render RSC response',
       'render HTML stream',
     ]
 
@@ -346,6 +347,7 @@ describe('request insights trace viewer', () => {
           attributes: {
             'next.span.category': 'application',
             'next.span_type': 'ResolveMetadata.generateMetadata',
+            'next.span_name': 'generate metadata /',
           },
         },
         {
