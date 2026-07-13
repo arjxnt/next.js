@@ -546,36 +546,98 @@ export function renderToNodeFlightStream(
   clientModules: FlightClientModules,
   opts: FlightRenderOptions
 ): AnyStream {
-  if (!ComponentMod.renderToPipeableStream) {
-    throw new Error('renderToPipeableStream is not implemented')
-  }
-
-  // `renderToPipeableStream` has no `signal` option (unlike the Web
-  // `renderToReadableStream`), so pull `signal` out of the options and abort
-  // the returned pipeable ourselves when it fires. We drop the listener when
-  // the passthrough closes so a finished render's `pipeable` isn't retained by
-  // the request signal, which can outlive it.
-  const { signal, ...renderOptions } = opts ?? {}
-
-  const pt = new PassThrough()
-  const pipeable = ComponentMod.renderToPipeableStream!(
-    payload,
-    clientModules,
-    renderOptions
-  )
-  pipeable.pipe(pt)
-
-  if (signal) {
-    if (signal.aborted) {
-      pipeable.abort(signal.reason)
-    } else {
-      const onAbort = () => pipeable.abort(signal.reason)
-      signal.addEventListener('abort', onAbort, { once: true })
-      pt.on('close', () => signal.removeEventListener('abort', onAbort))
+  if (!getRequestInsightsIdentity() && process.env.NEXT_OTEL_VERBOSE !== '1') {
+    if (!ComponentMod.renderToPipeableStream) {
+      throw new Error('renderToPipeableStream is not implemented')
     }
+
+    const { signal, ...renderOptions } = opts ?? {}
+    const pt = new PassThrough()
+    const pipeable = ComponentMod.renderToPipeableStream(
+      payload,
+      clientModules,
+      renderOptions
+    )
+    pipeable.pipe(pt)
+
+    if (signal) {
+      if (signal.aborted) {
+        pipeable.abort(signal.reason)
+      } else {
+        const onAbort = () => pipeable.abort(signal.reason)
+        signal.addEventListener('abort', onAbort, { once: true })
+        pt.on('close', () => signal.removeEventListener('abort', onAbort))
+      }
+    }
+
+    return pt
   }
 
-  return pt
+  return getTracer().trace(
+    AppRenderSpan.renderRSCResponse,
+    { spanName: 'render RSC response' },
+    (_span, done) => {
+      if (!ComponentMod.renderToPipeableStream) {
+        throw new Error('renderToPipeableStream is not implemented')
+      }
+
+      // `renderToPipeableStream` has no `signal` option (unlike the Web
+      // `renderToReadableStream`), so pull `signal` out of the options and abort
+      // the returned pipeable ourselves when it fires. We drop the listener when
+      // rendering finishes so a finished render's `pipeable` isn't retained by
+      // the request signal, which can outlive it.
+      const { signal, ...renderOptions } = opts ?? {}
+
+      const pt = new PassThrough()
+      const pipeable = ComponentMod.renderToPipeableStream(
+        payload,
+        clientModules,
+        renderOptions
+      )
+      let finished = false
+      let onAbort: (() => void) | undefined
+
+      const finish = (error?: Error) => {
+        if (finished) return
+        finished = true
+        if (onAbort) signal?.removeEventListener('abort', onAbort)
+        done?.(error)
+      }
+
+      pt.once('finish', () => finish())
+      pt.once('error', (error) => finish(error))
+      pt.once('close', () => {
+        if (!pt.writableFinished) {
+          finish(new Error('RSC render stream closed before completion'))
+        }
+      })
+
+      pipeable.pipe(pt)
+
+      if (signal) {
+        if (signal.aborted) {
+          pipeable.abort(signal.reason)
+          finish(
+            signal.reason instanceof Error
+              ? signal.reason
+              : new Error('RSC render aborted')
+          )
+        } else {
+          onAbort = () => {
+            pipeable.abort(signal.reason)
+            finish(
+              signal.reason instanceof Error
+                ? signal.reason
+                : new Error('RSC render aborted')
+            )
+          }
+          signal.addEventListener('abort', onAbort, { once: true })
+        }
+      }
+
+      return pt
+    }
+  )
 }
 
 export { renderToWebFizzStream } from './stream-ops.web'

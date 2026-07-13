@@ -99,6 +99,7 @@ enum AppRenderSpan {
   initializeRender = 'AppRender.initializeRender',
   finalizeRSCPayload = 'AppRender.finalizeRSCPayload',
   startRSCStream = 'AppRender.startRSCStream',
+  renderRSCResponse = 'AppRender.renderRSCResponse',
   waitForRSC = 'AppRender.waitForRSC',
   prepareHTMLRender = 'AppRender.prepareHTMLRender',
   renderToString = 'AppRender.renderToString',
@@ -111,6 +112,7 @@ enum AppRenderSpan {
   waitForFizzFlush = 'AppRender.waitForFizzFlush',
   createHTMLTransforms = 'AppRender.createHTMLTransforms',
   renderToNodeFizzStream = 'AppRender.renderToNodeFizzStream',
+  waitForHTMLCompletion = 'AppRender.waitForHTMLCompletion',
 }
 
 enum RouterSpan {

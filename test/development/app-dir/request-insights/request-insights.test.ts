@@ -163,6 +163,10 @@ describe('request insights', () => {
       (span) =>
         span.attributes?.['next.span_type'] === 'AppRender.startRSCStream'
     )
+    const renderRSCResponseSpan = request?.spans.findLast(
+      (span) =>
+        span.attributes?.['next.span_type'] === 'AppRender.renderRSCResponse'
+    )
     const waitForRSCSpan = request?.spans.find(
       (span) => span.attributes?.['next.span_type'] === 'AppRender.waitForRSC'
     )
@@ -174,6 +178,11 @@ describe('request insights', () => {
       (span) =>
         span.attributes?.['next.span_type'] ===
         'AppRender.renderToNodeFizzStream'
+    )
+    const waitForHTMLCompletionSpan = request?.spans.findLast(
+      (span) =>
+        span.attributes?.['next.span_type'] ===
+        'AppRender.waitForHTMLCompletion'
     )
     const renderToReadableStreamSpan = request?.spans.findLast(
       (span) =>
@@ -293,9 +302,11 @@ describe('request insights', () => {
     expect(buildComponentTreeSpan).toBeDefined()
     expect(finalizeRSCPayloadSpan).toBeDefined()
     expect(startRSCStreamSpan).toBeDefined()
+    expect(renderRSCResponseSpan).toBeDefined()
     expect(waitForRSCSpan).toBeDefined()
     expect(prepareHTMLRenderSpan).toBeDefined()
     expect(renderToNodeFizzStreamSpan).toBeDefined()
+    expect(waitForHTMLCompletionSpan).toBeDefined()
     expect(renderToReadableStreamSpan).toBeDefined()
     expect(waitShellReadySpan).toBeDefined()
     expect(waitForFizzRenderTaskSpan).toBeDefined()
@@ -312,8 +323,19 @@ describe('request insights', () => {
     ).toBe(true)
     expect(requestSpan!.attributes?.['next.span.category']).toBe('nextjs')
     expect(renderToNodeFizzStreamSpan!.attributes?.['next.span_name']).toBe(
-      'render HTML response'
+      'render HTML shell'
     )
+    expect(renderRSCResponseSpan!.attributes?.['next.span_name']).toBe(
+      'render RSC response'
+    )
+    expect(waitForRSCSpan!.attributes?.['next.span_name']).toBe(
+      'wait for RSC render task'
+    )
+    expect(waitForHTMLCompletionSpan!.attributes?.['next.span_name']).toBe(
+      'wait for HTML completion'
+    )
+    expect(renderRSCResponseSpan!.parentSpanId).toBe(renderSpan!.spanId)
+    expect(waitForHTMLCompletionSpan!.parentSpanId).toBe(renderSpan!.spanId)
     expect(renderToReadableStreamSpan!.attributes?.['next.span_name']).toBe(
       'start HTML render'
     )
@@ -500,9 +522,11 @@ describe('request insights', () => {
         'AppRender.initializeRender',
         'AppRender.finalizeRSCPayload',
         'AppRender.startRSCStream',
+        'AppRender.renderRSCResponse',
         'AppRender.waitForRSC',
         'AppRender.prepareHTMLRender',
         'AppRender.renderToNodeFizzStream',
+        'AppRender.waitForHTMLCompletion',
         'AppRender.waitShellReady',
         'AppRender.waitForFizzRenderTask',
         'AppRender.pipeFizzStream',
@@ -520,6 +544,90 @@ describe('request insights', () => {
           'NextNodeServer.clientComponentLoading'
       )
     ).toBe(false)
+  })
+
+  it('tracks RSC rendering and HTML completion across Suspense', async () => {
+    await next.render('/suspense')
+
+    const snapshot = (await next
+      .fetch('/_next/development/request-insights')
+      .then((response) => response.json())) as {
+      requests: RequestInsight[]
+    }
+    const request = snapshot.requests.findLast(
+      (insight) => insight.route === '/suspense'
+    )
+    const renderSpan = request?.spans.find(
+      (span) =>
+        span.attributes?.['next.span_type'] === 'AppRender.getBodyResult'
+    )
+    const renderRSCResponseSpan = request?.spans.find(
+      (span) =>
+        span.attributes?.['next.span_type'] === 'AppRender.renderRSCResponse' &&
+        span.parentSpanId === renderSpan?.spanId
+    )
+    const renderHTMLShellSpan = request?.spans.find(
+      (span) =>
+        span.attributes?.['next.span_type'] ===
+          'AppRender.renderToNodeFizzStream' &&
+        span.parentSpanId === renderSpan?.spanId
+    )
+    const waitForHTMLCompletionSpan = request?.spans.find(
+      (span) =>
+        span.attributes?.['next.span_type'] ===
+          'AppRender.waitForHTMLCompletion' &&
+        span.parentSpanId === renderSpan?.spanId
+    )
+
+    expect(renderSpan).toBeDefined()
+    expect(renderRSCResponseSpan).toBeDefined()
+    expect(renderHTMLShellSpan).toBeDefined()
+    expect(waitForHTMLCompletionSpan).toBeDefined()
+    expect(renderRSCResponseSpan!.durationMs).toBeGreaterThanOrEqual(150)
+    expect(waitForHTMLCompletionSpan!.durationMs).toBeGreaterThanOrEqual(150)
+    expect(renderHTMLShellSpan!.durationMs).toBeLessThan(
+      renderRSCResponseSpan!.durationMs!
+    )
+    expect(
+      Math.abs(
+        waitForHTMLCompletionSpan!.startTime +
+          waitForHTMLCompletionSpan!.durationMs! -
+          (renderSpan!.startTime + renderSpan!.durationMs!)
+      )
+    ).toBeLessThan(5)
+  })
+
+  it('attributes delayed server component work to RSC rendering', async () => {
+    await next.render('/delayed')
+
+    const snapshot = (await next
+      .fetch('/_next/development/request-insights')
+      .then((response) => response.json())) as {
+      requests: RequestInsight[]
+    }
+    const request = snapshot.requests.findLast(
+      (insight) => insight.route === '/delayed'
+    )
+    const renderSpan = request?.spans.find(
+      (span) =>
+        span.attributes?.['next.span_type'] === 'AppRender.getBodyResult'
+    )
+    const renderRSCResponseSpan = request?.spans.find(
+      (span) =>
+        span.attributes?.['next.span_type'] === 'AppRender.renderRSCResponse' &&
+        span.parentSpanId === renderSpan?.spanId
+    )
+    const renderHTMLShellSpan = request?.spans.find(
+      (span) =>
+        span.attributes?.['next.span_type'] ===
+          'AppRender.renderToNodeFizzStream' &&
+        span.parentSpanId === renderSpan?.spanId
+    )
+
+    expect(renderRSCResponseSpan).toBeDefined()
+    expect(renderHTMLShellSpan).toBeDefined()
+    expect(renderRSCResponseSpan!.durationMs).toBeGreaterThanOrEqual(150)
+    expect(renderHTMLShellSpan!.durationMs).toBeGreaterThanOrEqual(150)
   })
 
   it('uses the development endpoint and reports truncated output', async () => {

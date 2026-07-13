@@ -3419,6 +3419,21 @@ async function renderToStream(
     renderSpan.end()
   }
 
+  const trackHTMLRenderCompletion = (allReady: Promise<void>) => {
+    const completion = getTracer().trace(
+      AppRenderSpan.waitForHTMLCompletion,
+      { spanName: 'wait for HTML completion' },
+      () => allReady
+    )
+
+    void completion.then(
+      () => {
+        if (renderSpan.isRecording()) renderSpan.end()
+      },
+      (err) => endSpanWithError(err)
+    )
+  }
+
   // Run the rest of the function within the span's context so child spans
   // (like "build component tree", "generateMetadata") are properly parented.
   return getTracer().withSpan(renderSpan, async () => {
@@ -3854,7 +3869,7 @@ async function renderToStream(
       ) {
         await getTracer().trace(
           AppRenderSpan.waitForRSC,
-          { spanName: 'wait for RSC render' },
+          { spanName: 'wait for RSC render task' },
           waitAtLeastOneReactRenderTask
         )
       } else {
@@ -3921,10 +3936,7 @@ async function renderToStream(
                 { onError: htmlRendererErrorHandler, nonce }
               )
 
-            // End the render span only after React completed rendering (including anything inside Suspense boundaries)
-            allReady.finally(() => {
-              if (renderSpan.isRecording()) renderSpan.end()
-            })
+            trackHTMLRenderCompletion(allReady)
 
             return await continueDynamicHTMLResumeNode(htmlStream, {
               delayDataUntilFirstHtmlChunk:
@@ -3999,7 +4011,7 @@ async function renderToStream(
 
         const { stream: htmlStream, allReady } = await getTracer().trace(
           AppRenderSpan.renderToNodeFizzStream,
-          { spanName: 'render HTML response' },
+          { spanName: 'render HTML shell' },
           () =>
             workUnitAsyncStorage.run(
               requestStore,
@@ -4010,10 +4022,7 @@ async function renderToStream(
             )
         )
 
-        // End the render span only after React completed rendering (including anything inside Suspense boundaries)
-        allReady.finally(() => {
-          if (renderSpan.isRecording()) renderSpan.end()
-        })
+        trackHTMLRenderCompletion(allReady)
 
         return await continueFizzStream(htmlStream, {
           inlinedDataStream: createNodeInlinedDataStream(
@@ -4083,10 +4092,7 @@ async function renderToStream(
                 { onError: htmlRendererErrorHandler, nonce }
               )
 
-            // End the render span only after React completed rendering (including anything inside Suspense boundaries)
-            allReady.finally(() => {
-              if (renderSpan.isRecording()) renderSpan.end()
-            })
+            trackHTMLRenderCompletion(allReady)
 
             return await continueDynamicHTMLResumeWeb(htmlStream, {
               delayDataUntilFirstHtmlChunk:
@@ -4148,10 +4154,7 @@ async function renderToStream(
           fizzOptions
         )
 
-        // End the render span only after React completed rendering (including anything inside Suspense boundaries)
-        allReady.finally(() => {
-          if (renderSpan.isRecording()) renderSpan.end()
-        })
+        trackHTMLRenderCompletion(allReady)
 
         return await continueFizzStream(htmlStream, {
           inlinedDataStream: createWebInlinedDataStream(
@@ -4299,9 +4302,7 @@ async function renderToStream(
               { waitForAllReady: generateStaticHTML }
             )
 
-          errorAllReady.finally(() => {
-            if (renderSpan.isRecording()) renderSpan.end()
-          })
+          trackHTMLRenderCompletion(errorAllReady)
 
           return await continueFizzStream(errorHtmlStream, {
             inlinedDataStream: createNodeInlinedDataStream(
@@ -4397,9 +4398,7 @@ async function renderToStream(
               }
             )
 
-          errorAllReady.finally(() => {
-            if (renderSpan.isRecording()) renderSpan.end()
-          })
+          trackHTMLRenderCompletion(errorAllReady)
 
           return await continueFizzStream(errorHtmlStream, {
             inlinedDataStream: createWebInlinedDataStream(
