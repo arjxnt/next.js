@@ -42,6 +42,7 @@ const DEFAULT_VISIBLE_SPAN_TYPES = new Set([
   'AppRender.waitForRSC',
   'AppRender.renderToNodeFizzStream',
   'AppRender.waitForHTMLCompletion',
+  'AppRender.executeServerAction',
   FETCH_SPAN_TYPE,
   'NextNodeServer.waitForFirstResponseChunk',
   'NextNodeServer.startResponse',

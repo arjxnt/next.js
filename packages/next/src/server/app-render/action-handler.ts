@@ -74,8 +74,44 @@ import {
   ActionDidRevalidateStaticAndDynamic,
 } from '../../shared/lib/action-revalidation-kind'
 import { computeCacheBustingSearchParam } from '../../shared/lib/router/utils/cache-busting-search-param'
+import { getTracer } from '../lib/trace/tracer'
+import { AppRenderSpan } from '../lib/trace/constants'
 
 const INLINE_ACTION_PREFIX = '$$RSC_SERVER_ACTION_'
+
+type ServerActionInfo = {
+  name: string
+  file: string
+}
+
+function getServerActionInfo(
+  actionId: string,
+  ctx: AppRenderContext
+): ServerActionInfo | null {
+  const serverActionsManifest = getServerActionsManifest()
+  const runtime = process.env.NEXT_RUNTIME === 'edge' ? 'edge' : 'node'
+  const actionInfo = serverActionsManifest[runtime]?.[actionId]
+
+  if (!actionInfo) {
+    return null
+  }
+
+  const projectDir =
+    ctx.renderOpts.dir ||
+    (process.env.NEXT_RUNTIME === 'edge' ? '' : process.cwd())
+  const file = normalizeFilePath(projectDir, actionInfo.filename)
+  const isInlineAction =
+    actionInfo.exportedName?.startsWith(INLINE_ACTION_PREFIX)
+
+  return {
+    name: isInlineAction
+      ? '<inline action>'
+      : actionInfo.exportedName === 'default'
+        ? 'default'
+        : actionInfo.exportedName || '<action>',
+    file,
+  }
+}
 
 /**
  * Checks if the app has any server actions defined in any runtime.
@@ -788,7 +824,11 @@ export async function handleAction({
             } else {
               // Multipart POST, but not a fetch action.
               // Potentially an MPA action, we have to try decoding it to check.
-              if (areAllActionIdsValid(formData, serverModuleMap) === false) {
+              const mpaActionId = getValidatedMPAActionId(
+                formData,
+                serverModuleMap
+              )
+              if (mpaActionId === null) {
                 // TODO: This can be from skew or manipulated input. We should handle this case
                 // more gracefully but this preserves the prior behavior where decodeAction would throw instead.
                 throw new Error(
@@ -808,7 +848,11 @@ export async function handleAction({
                   [],
                   workStore,
                   requestStore,
-                  actionWasForwarded
+                  actionWasForwarded,
+                  getServerActionInfo(mpaActionId, ctx) ?? {
+                    name: '<action>',
+                    file: '',
+                  }
                 )
 
                 const formState = await decodeFormState(
@@ -994,7 +1038,11 @@ export async function handleAction({
                 throw err
               }
 
-              if (areAllActionIdsValid(formData, serverModuleMap) === false) {
+              const mpaActionId = getValidatedMPAActionId(
+                formData,
+                serverModuleMap
+              )
+              if (mpaActionId === null) {
                 // TODO: This can be from skew or manipulated input. We should handle this case
                 // more gracefully but this preserves the prior behavior where decodeAction would throw instead.
                 throw new Error(
@@ -1016,7 +1064,11 @@ export async function handleAction({
                   [],
                   workStore,
                   requestStore,
-                  actionWasForwarded
+                  actionWasForwarded,
+                  getServerActionInfo(mpaActionId, ctx) ?? {
+                    name: '<action>',
+                    file: '',
+                  }
                 )
 
                 const formState = await decodeFormState(
@@ -1101,6 +1153,8 @@ export async function handleAction({
             actionId!
           ]
 
+        const serverActionInfo = getServerActionInfo(actionId!, ctx)
+
         // Log server action call in development when enabled
         let logInfo: ServerActionLogInfo | null = null
         const { type: actionType } = extractInfoFromServerReferenceId(actionId!)
@@ -1111,30 +1165,12 @@ export async function handleAction({
           // output needs more work, or a different approach entirely.
           actionType !== 'use-cache'
         ) {
-          const serverActionsManifest = getServerActionsManifest()
-          const runtime = process.env.NEXT_RUNTIME === 'edge' ? 'edge' : 'node'
-          const actionInfo = serverActionsManifest[runtime]?.[actionId!]
-
-          if (actionInfo) {
-            const isInlineAction =
-              actionInfo.exportedName?.startsWith(INLINE_ACTION_PREFIX)
-
-            const projectDir =
-              ctx.renderOpts.dir ||
-              (process.env.NEXT_RUNTIME === 'edge' ? '' : process.cwd())
-            const location = normalizeFilePath(projectDir, actionInfo.filename)
-
-            // Format function name for display
-            let functionName: string
-            if (isInlineAction) {
-              functionName = '<inline action>'
-            } else if (actionInfo.exportedName === 'default') {
-              functionName = 'default'
-            } else {
-              functionName = actionInfo.exportedName || '<action>'
+          if (serverActionInfo) {
+            logInfo = {
+              functionName: serverActionInfo.name,
+              args: boundActionArguments,
+              location: serverActionInfo.file,
             }
-
-            logInfo = { functionName, args: boundActionArguments, location }
           }
         }
 
@@ -1145,7 +1181,8 @@ export async function handleAction({
             boundActionArguments,
             workStore,
             requestStore,
-            actionWasForwarded
+            actionWasForwarded,
+            serverActionInfo ?? { name: '<action>', file: '' }
           ).finally(() => {
             addRevalidationHeader(res, { workStore, requestStore })
             if (logInfo) {
@@ -1306,7 +1343,8 @@ async function executeActionAndPrepareForRender<
   args: Parameters<TFn>,
   workStore: WorkStore,
   requestStore: RequestStore,
-  actionWasForwarded: boolean
+  actionWasForwarded: boolean,
+  serverAction: ServerActionInfo
 ): Promise<{
   actionResult: Awaited<ReturnType<TFn>>
   skipPageRendering: boolean
@@ -1321,8 +1359,32 @@ async function executeActionAndPrepareForRender<
   }
 
   try {
-    const actionResult = await workUnitAsyncStorage.run(requestStore, () =>
-      action.apply(null, args)
+    const actionResult = await getTracer().trace(
+      AppRenderSpan.executeServerAction,
+      {
+        spanName: `run Server Action ${serverAction.name}`,
+        attributes: {
+          'next.span.category': 'application',
+          'next.server_action.name': serverAction.name,
+          'next.server_action.file': serverAction.file || undefined,
+        },
+      },
+      async (_span, done) => {
+        try {
+          const result = await workUnitAsyncStorage.run(requestStore, () =>
+            action.apply(null, args)
+          )
+          done?.()
+          return result
+        } catch (err) {
+          done?.(
+            isRedirectError(err) || isHTTPAccessFallbackError(err)
+              ? undefined
+              : (err as Error)
+          )
+          throw err
+        }
+      }
     )
 
     // If the page was not revalidated, or if the action was forwarded from
@@ -1394,11 +1456,12 @@ const ACTION_ID_EXPECTED_LENGTH = 42
  * It pre-parses the FormData to ensure that any action IDs referred to are actual action IDs for
  * this Next.js application.
  */
-function areAllActionIdsValid(
+function getValidatedMPAActionId(
   mpaFormData: FormData,
   serverModuleMap: ServerModuleMap
-): boolean {
-  let hasAtLeastOneAction = false
+): string | null {
+  let actionId: string | null = null
+  const seenActions = new Set<string>()
   // Before we attempt to decode the payload for a possible MPA action, assert that all
   // action IDs are valid IDs. If not we should disregard the payload
   for (let key of mpaFormData.keys()) {
@@ -1410,30 +1473,39 @@ function areAllActionIdsValid(
     if (key.startsWith($ACTION_ID_)) {
       // No Bound args case
       if (isInvalidActionIdFieldName(key, serverModuleMap)) {
-        return false
+        return null
       }
 
-      hasAtLeastOneAction = true
+      if (!seenActions.has(key)) {
+        seenActions.add(key)
+        actionId = key.slice($ACTION_ID_.length)
+      }
     } else if (key.startsWith($ACTION_REF_)) {
       // Bound args case
       const actionDescriptorField =
         $ACTION_ + key.slice($ACTION_REF_.length) + ':0'
       const actionFields = mpaFormData.getAll(actionDescriptorField)
       if (actionFields.length !== 1) {
-        return false
+        return null
       }
       const actionField = actionFields[0]
       if (typeof actionField !== 'string') {
-        return false
+        return null
       }
 
       if (isInvalidStringActionDescriptor(actionField, serverModuleMap)) {
-        return false
+        return null
       }
-      hasAtLeastOneAction = true
+      if (!seenActions.has(key)) {
+        seenActions.add(key)
+        actionId = actionField.slice(
+          ACTION_DESCRIPTOR_ID_PREFIX.length,
+          ACTION_DESCRIPTOR_ID_PREFIX.length + ACTION_ID_EXPECTED_LENGTH
+        )
+      }
     }
   }
-  return hasAtLeastOneAction
+  return actionId
 }
 
 const ACTION_DESCRIPTOR_ID_PREFIX = '{"id":"'
