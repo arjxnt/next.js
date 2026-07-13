@@ -120,6 +120,9 @@ describe('request insights', () => {
     const baseRenderSpan = request?.spans.find(
       (span) => span.attributes?.['next.span_type'] === 'BaseServer.render'
     )
+    const pipeSpan = request?.spans.find(
+      (span) => span.attributes?.['next.span_type'] === 'BaseServer.pipe'
+    )
     const renderSpan = request?.spans.find(
       (span) => span.attributes?.['next.span_name'] === 'render route (app) /'
     )
@@ -298,8 +301,18 @@ describe('request insights', () => {
     expect(reloadMatchersSpan).toBeDefined()
     expect(matchProductionRouteSpan).toBeDefined()
     expect(baseRenderSpan).toBeDefined()
+    expect(baseRenderSpan!.attributes?.['next.span_name']).toBe(
+      'render request'
+    )
+    expect(pipeSpan).toBeDefined()
+    expect(pipeSpan!.attributes?.['next.span_name']).toBe(
+      'render and send response'
+    )
     expect(renderSpan).toBeDefined()
     expect(renderWithComponentsSpan).toBeDefined()
+    expect(renderWithComponentsSpan!.attributes?.['next.span_name']).toBe(
+      'render response'
+    )
     expect(prepareResponseSpan).toBeDefined()
     expect(getIncrementalCacheSpan).toBeDefined()
     expect(resolvePrerenderingSpan).toBeDefined()

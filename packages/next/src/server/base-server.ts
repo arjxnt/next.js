@@ -1853,8 +1853,10 @@ export default abstract class Server<
       'renderOpts'
     >
   ): Promise<void> {
-    return getTracer().trace(BaseServerSpan.pipe, async () =>
-      this.pipeImpl(fn, partialContext)
+    return getTracer().trace(
+      BaseServerSpan.pipe,
+      { spanName: 'render and send response' },
+      async () => this.pipeImpl(fn, partialContext)
     )
   }
 
@@ -1956,8 +1958,11 @@ export default abstract class Server<
     parsedUrl?: NextUrlWithParsedQuery,
     internalRender = false
   ): Promise<void> {
-    return getTracer().trace(BaseServerSpan.render, async () =>
-      this.renderImpl(req, res, pathname, query, parsedUrl, internalRender)
+    return getTracer().trace(
+      BaseServerSpan.render,
+      { spanName: 'render request' },
+      async () =>
+        this.renderImpl(req, res, pathname, query, parsedUrl, internalRender)
     )
   }
 
@@ -2085,6 +2090,7 @@ export default abstract class Server<
 
     return getTracer().trace(
       BaseServerSpan.renderToResponseWithComponents,
+      { spanName: 'render response' },
       async () => {
         try {
           return await this.renderToResponseWithComponentsImpl(
