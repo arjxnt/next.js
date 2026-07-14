@@ -21,6 +21,7 @@ const { env, stdout } = globalThis?.process ?? {}
 const enabled =
   env &&
   !env.NO_COLOR &&
+  env.FORCE_COLOR !== '0' &&
   (env.FORCE_COLOR || (stdout?.isTTY && !env.CI && env.TERM !== 'dumb'))
 
 const replaceClose = (
