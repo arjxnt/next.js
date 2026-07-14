@@ -17,6 +17,7 @@ import { formatHostname } from '../format-hostname'
 import { toNodeOutgoingHttpHeaders } from '../../web/utils'
 import { isAbortError } from '../../pipe-readable'
 import { getHostname } from '../../../shared/lib/get-hostname'
+import { normalizeLoopbackHostname } from '../../../shared/lib/normalize-loopback-hostname'
 import {
   getRedirectStatus,
   allowedStatusCodes,
@@ -174,7 +175,7 @@ export function getResolveRoutes(
     const initUrl = (config.experimental as any).trustHostHeader
       ? `https://${req.headers.host || 'localhost'}${req.url}`
       : opts.port
-        ? `${protocol}://${formatHostname(opts.hostname || 'localhost')}:${
+        ? `${protocol}://${formatHostname(normalizeLoopbackHostname(opts.hostname || 'localhost'))}:${
             opts.port
           }${req.url}`
         : req.url || ''
